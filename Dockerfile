@@ -9,6 +9,7 @@ WORKDIR /app
 # Copy requirements dan install
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade yt-dlp
 
 # Copy sisa file (termasuk app.py dan cookies.txt)
 COPY . .

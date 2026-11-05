@@ -27,18 +27,16 @@ def ytplay():
     if not video_id:
         return jsonify({"error": "Parameter 'v' wajib diisi"}), 400
 
-    ydl_opts = {
+        ydl_opts = {
         'format': 'bestaudio/best',
-        'quiet': True, # Set False kalau mau lihat log lengkap
+        'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # Konfigurasi PO Token Provider (Mengambil dari Environment Variable Railway)
         'extractor_args': {
-            'youtubepot-bgutilhttp': {
-                'base_url': os.environ.get('YOUTUBE_POT_PROVIDER_URL', 'http://127.0.0.1:4416')
+            'youtube': {
+                'player_client': ['android_vr', 'tv_embedded', 'web']
             }
         },
-        # Pakai cookies kalau ada
         'cookiefile': '/app/cookies.txt' if os.path.exists('/app/cookies.txt') else None
     }
 
