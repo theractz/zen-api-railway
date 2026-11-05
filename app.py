@@ -1,22 +1,18 @@
 # app.py
 import os
-import subprocess
 import time
 from flask import Flask, request, jsonify
 import yt_dlp
+
+app = Flask(__name__)
+
+# --- TAMBAHAN UNTUK CORS (IZIN BROWSER) ---
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
-
-app = Flask(__name__)
-
-# Jalankan PO Token Provider di background saat server start
-print("Menjalankan PO Token Provider...")
-# Tunggu sebentar agar provider siap
-time.sleep(3)
 
 @app.route('/ytplay', methods=['GET'])
 def ytplay():
@@ -26,13 +22,13 @@ def ytplay():
 
     ydl_opts = {
         'format': 'bestaudio/best',
-        'quiet': False, # Set True kalau sudah stabil
+        'quiet': True, # Set False kalau mau lihat log lengkap
         'no_warnings': True,
         'noplaylist': True,
-        # Konfigurasi PO Token Provider
+        # Konfigurasi PO Token Provider (Mengambil dari Environment Variable Railway)
         'extractor_args': {
             'youtubepot-bgutilhttp': {
-                'base_url': 'http://127.0.0.1:4416'
+                'base_url': os.environ.get('YOUTUBE_POT_PROVIDER_URL', 'http://127.0.0.1:4416')
             }
         },
         # Pakai cookies kalau ada
