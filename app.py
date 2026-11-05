@@ -1,140 +1,112 @@
-# app.py
 import os
 import traceback
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import yt_dlp
 
 app = Flask(__name__)
 
-# --- 1. PERTAHANAN CORS (Wajib untuk Vercel) ---
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+# 1. IZIN CORS PALING AMAN
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# --- 2. PERTAHANAN ERROR GLOBAL (Agar tidak crash & CORS hilang) ---
-@app.errorhandler(Exception)
-def handle_exception(e):
-    # Cetak error asli ke log Railway
-    print("=== SERVER ERROR ===")
-    traceback.print_exc()
+# 2. FUNGSI EKSTRAKSI DENGAN PENYAMARAN (SPOOFING)
+def get_audio_url(video_id: str):
+    url = f"https://www.youtube.com/watch?v={video_id}"
     
-    # Kirim response JSON yang rapi, bukan halaman HTML error
-    response = jsonify({
-        "status": False, 
-        "error": str(e),
-        "message": "Terjadi kesalahan internal di server."
-    })
-    response.status_code = 500
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    return response
+    # Kita paksa pakai client TV dan Web Embedded (sering lolos dari blokir bot)
+    clients = ["tv_embedded", "web_embedded", "mweb"]
+    
+    base_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "geo_bypass": True,
+        
+        # --- TRIK PENYAMARAN USER-AGENT ---
+        # Pura-pura jadi browser Chrome asli
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "headers": {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-us,en;q=0.5",
+            "Sec-Fetch-Mode": "navigate"
+        },
+        
+        # Pastikan path cookies benar
+        "cookiefile": "/app/cookies.txt" if os.path.exists("/app/cookies.txt") else None
+    }
 
-# --- 3. RUTE UTAMA ---
+    last_error = None
+
+    for client in clients:
+        opts = base_opts.copy()
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": [client]
+            }
+        }
+
+        try:
+            print(f"[YT-DLP] Mencoba client: {client}...")
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                # Ambil URL audio
+                if "url" in info:
+                    print(f"[YT-DLP] ✅ Berhasil dengan client: {client}")
+                    return {
+                        "status": True,
+                        "audio": info["url"],
+                        "title": info.get("title"),
+                        "duration": info.get("duration"),
+                        "client": client
+                    }
+                
+                formats = info.get("formats", [])
+                audio_formats = [f for f in formats if f.get("acodec") != "none"]
+                if audio_formats:
+                    best = max(audio_formats, key=lambda x: x.get("abr") or 0)
+                    print(f"[YT-DLP] ✅ Berhasil (fallback) dengan client: {client}")
+                    return {
+                        "status": True,
+                        "audio": best["url"],
+                        "title": info.get("title"),
+                        "duration": info.get("duration"),
+                        "client": client
+                    }
+                
+                print(f"[YT-DLP] ❌ Client {client} tidak menemukan format audio.")
+
+        except Exception as e:
+            last_error = str(e)
+            print(f"[YT-DLP] ❌ Client {client} gagal: {last_error}")
+            continue
+
+    raise Exception(f"Semua client gagal. Error terakhir: {last_error}")
+
+# 3. RUTE UTAMA
 @app.route('/ytplay', methods=['GET'])
 def ytplay():
     video_id = request.args.get('v')
     if not video_id:
-        return jsonify({"status": False, "error": "Parameter 'v' (video ID) wajib diisi"}), 400
+        return jsonify({"status": False, "error": "Parameter 'v' wajib diisi"}), 400
 
-    # --- 4. STRATEGI BERLAPIS UNTUK YT-DLP ---
-    # Kita coba beberapa konfigurasi jika yang pertama gagal
-    strategies = [
-        {
-            # Strategi 1: Client Android VR (Paling jarang kena blokir)
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android_vr', 'tv_embedded']
-                }
-            }
-        },
-        {
-            # Strategi 2: Client Web dengan PO Token (Jika tersedia)
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web']
-                },
-                'youtubepot-bgutilhttp': {
-                    'base_url': os.environ.get('YOUTUBE_POT_PROVIDER_URL', 'http://127.0.0.1:4416')
-                }
-            }
-        },
-        {
-            # Strategi 3: Format 'best' (Cadangan terakhir, ambil video+audio)
-            'format': 'best',
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android_vr', 'tv_embedded', 'web']
-                }
-            }
-        }
-    ]
+    try:
+        result = get_audio_url(video_id)
+        return jsonify({"status": True, "result": result})
+    except Exception as e:
+        print("=== ERROR TERJADI ===")
+        traceback.print_exc()
+        return jsonify({"status": False, "error": str(e)}), 500
 
-    # Tambahkan cookies ke semua strategi jika ada
-    cookie_path = '/app/cookies.txt'
-    if os.path.exists(cookie_path):
-        for strat in strategies:
-            strat['cookiefile'] = cookie_path
-
-    last_error = "Tidak ada strategi yang berhasil."
-
-    for i, ydl_opts in enumerate(strategies):
-        try:
-            print(f"[STRATEGI {i+1}] Mencoba client: {ydl_opts.get('extractor_args', {}).get('youtube', {}).get('player_client', ['default'])}")
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
-                
-                # Ambil URL audio
-                audio_url = None
-                if 'url' in info:
-                    audio_url = info['url']
-                elif 'formats' in info:
-                    # Kalau info utama tidak punya URL, cari di daftar formats
-                    for f in info['formats']:
-                        if f.get('acodec') != 'none':
-                            audio_url = f.get('url')
-                            break
-                
-                if audio_url:
-                    print(f"[STRATEGI {i+1}] ✅ Berhasil!")
-                    return jsonify({
-                        "status": True,
-                        "result": {
-                            "title": info.get('title', ''),
-                            "duration": info.get('duration', 0),
-                            "audio": audio_url,
-                            "source": f"railway-strategy-{i+1}"
-                        }
-                    })
-                else:
-                    last_error = "Format audio tidak ditemukan di info."
-                    print(f"[STRATEGI {i+1}] ❌ Gagal: {last_error}")
-
-        except Exception as e:
-            last_error = str(e)
-            print(f"[STRATEGI {i+1}] ❌ Error: {last_error}")
-            # Lanjut ke strategi berikutnya
-            continue
-
-    # Jika semua strategi gagal
-    return jsonify({
-        "status": False, 
-        "error": f"Semua strategi gagal. Error terakhir: {last_error}"
-    }), 500
+# 4. ERROR HANDLER GLOBAL
+@app.errorhandler(Exception)
+def handle_exception(e):
+    print("=== GLOBAL ERROR ===")
+    traceback.print_exc()
+    response = jsonify({"status": False, "error": str(e)})
+    response.status_code = 500
+    return response
 
 if __name__ == '__main__':
-    # Jalankan server Flask
     app.run(host='0.0.0.0', port=5000)
