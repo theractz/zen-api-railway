@@ -1,112 +1,119 @@
-import os
-import traceback
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import yt_dlp
+import os
+import tempfile
+import traceback
 
 app = Flask(__name__)
+# Konfig CORS yang benar-benar menangani semua kasus
+CORS(
+    app,
+    resources={r"/ytplay": {"origins": "*"}},
+    methods=["GET"],
+    allow_headers=["Content-Type"],
+    supports_credentials=False
+)
 
-# 1. IZIN CORS PALING AMAN
-CORS(app, resources={r"/*": {"origins": "*"}})
+def get_youtube_cookies():
+    """Ambil cookies dari env var"""
+    cookies = os.getenv('YOUTUBE_COOKIES', '')
+    cookie_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+    cookie_file.write(cookies.encode('utf-8'))
+    cookie_file.close()
+    return cookie_file.name
 
-# 2. FUNGSI EKSTRAKSI DENGAN PENYAMARAN (SPOOFING)
-def get_audio_url(video_id: str):
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    
-    # Kita paksa pakai client TV dan Web Embedded (sering lolos dari blokir bot)
-    clients = ["tv_embedded", "web_embedded", "mweb"]
-    
-    base_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "bestaudio/best",
-        "noplaylist": True,
-        "geo_bypass": True,
-        
-        # --- TRIK PENYAMARAN USER-AGENT ---
-        # Pura-pura jadi browser Chrome asli
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "headers": {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-us,en;q=0.5",
-            "Sec-Fetch-Mode": "navigate"
-        },
-        
-        # Pastikan path cookies benar
-        "cookiefile": "/app/cookies.txt" if os.path.exists("/app/cookies.txt") else None
-    }
+def cleanup_cookie_file(cookie_path):
+    """Hapus file cookie sementara"""
+    try:
+        os.unlink(cookie_path)
+    except:
+        pass
 
-    last_error = None
-
-    for client in clients:
-        opts = base_opts.copy()
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": [client]
-            }
-        }
-
-        try:
-            print(f"[YT-DLP] Mencoba client: {client}...")
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                # Ambil URL audio
-                if "url" in info:
-                    print(f"[YT-DLP] ✅ Berhasil dengan client: {client}")
-                    return {
-                        "status": True,
-                        "audio": info["url"],
-                        "title": info.get("title"),
-                        "duration": info.get("duration"),
-                        "client": client
-                    }
-                
-                formats = info.get("formats", [])
-                audio_formats = [f for f in formats if f.get("acodec") != "none"]
-                if audio_formats:
-                    best = max(audio_formats, key=lambda x: x.get("abr") or 0)
-                    print(f"[YT-DLP] ✅ Berhasil (fallback) dengan client: {client}")
-                    return {
-                        "status": True,
-                        "audio": best["url"],
-                        "title": info.get("title"),
-                        "duration": info.get("duration"),
-                        "client": client
-                    }
-                
-                print(f"[YT-DLP] ❌ Client {client} tidak menemukan format audio.")
-
-        except Exception as e:
-            last_error = str(e)
-            print(f"[YT-DLP] ❌ Client {client} gagal: {last_error}")
-            continue
-
-    raise Exception(f"Semua client gagal. Error terakhir: {last_error}")
-
-# 3. RUTE UTAMA
 @app.route('/ytplay', methods=['GET'])
 def ytplay():
     video_id = request.args.get('v')
     if not video_id:
-        return jsonify({"status": False, "error": "Parameter 'v' wajib diisi"}), 400
+        response = jsonify({"status": False, "error": "Parameter 'v' (video ID) wajib diisi"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 400
+
+    cookie_path = get_youtube_cookies()
+
+    # Konfigurasi yt-dlp yang sangat agresif
+    ydl_opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/best',
+        'cookiefile': cookie_path,
+
+        # Client yang lebih stabil
+        'player_client': ['android', 'mweb', 'embed'],
+
+        # User-Agent untuk menghindari deteksi
+        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
+
+        # Header palsu
+        'http_headers': {
+            'Referer': 'https://www.youtube.com/',
+            'Accept-Language': 'id-ID,en-US;q=0.9',
+        },
+
+        # Timeout dan retry
+        'socket_timeout': 30,
+        'retries': 3,
+        'extract_flat': False,
+
+        # Nonaktifkan logging yang bisa memicu deteksi
+        'quiet': True,
+        'no_warnings': True,
+
+        # Konfigurasi POT Provider
+        'extractor_args': {
+            'youtube': {
+                'po_token': os.getenv('YOUTUBE_POT_PROVIDER_URL', ''),
+            }
+        },
+
+        # Nonaktifkan download, hanya ekstraksi URL
+        'skip_download': True,
+    }
 
     try:
-        result = get_audio_url(video_id)
-        return jsonify({"status": True, "result": result})
-    except Exception as e:
-        print("=== ERROR TERJADI ===")
-        traceback.print_exc()
-        return jsonify({"status": False, "error": str(e)}), 500
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(
+                f'https://www.youtube.com/watch?v={video_id}',
+                download=False
+            )
 
-# 4. ERROR HANDLER GLOBAL
-@app.errorhandler(Exception)
-def handle_exception(e):
-    print("=== GLOBAL ERROR ===")
-    traceback.print_exc()
-    response = jsonify({"status": False, "error": str(e)})
-    response.status_code = 500
-    return response
+            cleanup_cookie_file(cookie_path)
+
+            if 'url' not in info or not info['url']:
+                response = jsonify({
+                    "status": False,
+                    "error": "Tidak dapat memperoleh URL audio",
+                    "details": info
+                })
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response, 500
+
+            response = jsonify({
+                "status": True,
+                "audio": info['url'],
+                "title": info.get('title', ''),
+                "duration": info.get('duration', 0),
+                "format": info.get('ext', 'm4a')
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response
+
+    except Exception as e:
+        cleanup_cookie_file(cookie_path)
+        response = jsonify({
+            "status": False,
+            "error": f"Gagal memproses: {str(e)}",
+            "traceback": traceback.format_exc()
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
