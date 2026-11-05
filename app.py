@@ -14,6 +14,13 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
+@app.errorhandler(Exception)
+def handle_exception(e):
+    response = jsonify({"status": False, "error": str(e)})
+    response.status_code = 500
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
 @app.route('/ytplay', methods=['GET'])
 def ytplay():
     video_id = request.args.get('v')
