@@ -116,4 +116,6 @@ def ytplay():
         return response, 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    # Ambil port dari environment variable Railway, default ke 8080
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
