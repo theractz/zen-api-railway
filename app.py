@@ -11,12 +11,17 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 def get_youtube_cookies():
-    """Ambil cookies dari env var"""
-    cookies = os.getenv('YOUTUBE_COOKIES', '')
+    """Ambil cookies dari env var dan simpan ke file temporary"""
+    cookies = os.getenv('YOUTUBE_COOKIES', '').strip()
     if not cookies:
         return None
-    cookie_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    cookie_file.write(cookies.encode('utf-8'))
+    
+    # Pastikan format Netscape valid
+    if not cookies.startswith('# Netscape'):
+        cookies = '# Netscape HTTP Cookie File\n' + cookies
+        
+    cookie_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt', mode='w', encoding='utf-8')
+    cookie_file.write(cookies)
     cookie_file.close()
     return cookie_file.name
 
@@ -35,8 +40,11 @@ def ytplay():
         return jsonify({"status": False, "error": "Parameter 'v' (video ID) wajib diisi"}), 400
 
     cookie_path = get_youtube_cookies()
+    
+    # Ambil URL PO Token dari Environment Variable Railway
+    pot_url = os.getenv('YOUTUBE_POT_PROVIDER_URL', '')
 
-    # Konfigurasi yt-dlp yang lebih rapi
+    # Konfigurasi yt-dlp dengan PO Token Provider
     ydl_opts = {
         'format': 'bestaudio/best',
         'cookiefile': cookie_path,
@@ -48,8 +56,11 @@ def ytplay():
         'noplaylist': True,
         'extractor_args': {
             'youtube': {
-                # Coba client yang lebih stabil
-                'player_client': ['android', 'mweb', 'tv_embedded']
+                'player_client': ['tv_embedded', 'web_embedded'], # Client yang lebih longgar
+                'po_token': 'bgutil:http' # Memberitahu yt-dlp untuk pakai PO Token
+            },
+            'youtubepot-bgutilhttp': {
+                'base_url': pot_url # URL server PO Token dari Railway
             }
         },
     }
