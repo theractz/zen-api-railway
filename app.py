@@ -41,16 +41,18 @@ def ytplay():
     ydl_opts = {
         'format': 'bestaudio/best',
         'cookiefile': cookie_path,
-        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36    (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
         'socket_timeout': 30,
         'retries': 3,
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'extractor_args': {
-            # Format yang BENAR untuk bgutil-ytdlp-pot-provider
+                'extractor_args': {
+            'youtube': {
+                'player_client': ['mweb', 'tv', 'web_safari']
+            },
             'youtubepot-bgutilhttp': {
-                'base_url': [pot_url]  # HARUS LIST!
+                'base_url': [pot_url]
             }
         },
     }
